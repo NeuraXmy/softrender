@@ -73,14 +73,14 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)build\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)build\temp\$(Platform)\$(Configuration)\</IntDir>
-    <ExternalIncludePath>D:\Workspace\lib\glm-0.9.3.4;D:\Workspace\lib\stb_image\include;D:\Workspace\lib\assimp-5.2.2\include;$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>D:\Workspace\lib\assimp-5.2.2\build\lib\Debug;$(LibraryPath)</LibraryPath>
+    <ExternalIncludePath>$(SolutionDir)3rdparty\glm-0.9.3.4;$(SolutionDir)3rdparty\stb_image\include;$(SolutionDir)3rdparty\assimp-5.2.2\include;$(ExternalIncludePath)</ExternalIncludePath>
+    <LibraryPath>$(SolutionDir)3rdparty\assimp-5.2.2\build\lib\Debug;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(SolutionDir)build\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)build\temp\$(Platform)\$(Configuration)\</IntDir>
-    <ExternalIncludePath>D:\Workspace\lib\glm-0.9.3.4;D:\Workspace\lib\stb_image\include;D:\Workspace\lib\assimp-5.2.2\include;$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>D:\Workspace\lib\assimp-5.2.2\build\lib\Release;$(LibraryPath)</LibraryPath>
+    <ExternalIncludePath>$(SolutionDir)3rdparty\glm-0.9.3.4;$(SolutionDir)3rdparty\stb_image\include;$(SolutionDir)3rdparty\assimp-5.2.2\include;$(ExternalIncludePath)</ExternalIncludePath>
+    <LibraryPath>$(SolutionDir)3rdparty\assimp-5.2.2\build\lib\Release;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -121,6 +121,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>assimp-vc143-mtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
