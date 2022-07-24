@@ -1,5 +1,5 @@
 #ifndef UTILS_H
-#define UTILS
+#define UTILS_H
 
 #include <chrono>
 

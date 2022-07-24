@@ -11,12 +11,17 @@
 #include "unlit.h"
 #include "texture.h"
 #include "model.h"
+#include "profiler.h"
 
 static const int WIN_W = 500;
 static const int WIN_H = 500;
+static const int fps_limit = 1000000;
+static const double min_frame_time = 1.0 / fps_limit;
 
 int main()
 {
+	Profiler::set_mode(Profiler::Mode::SUM);
+
 	auto device = std::make_shared<RenderDevice>();
 	auto window = std::make_shared<RenderWindow>();
 		
@@ -87,6 +92,8 @@ int main()
 				window->close();
 			if (key == 'O')
 				camera_rotate_mat = trans::identity(), camera_dist = 5.0;
+			if (key == 'C')
+				Profiler::clear();
 		}
 		if (state == KeyState::UP)
 		{
@@ -186,7 +193,7 @@ int main()
 		last_time = get_time();
 		if (get_time() - last_print_fps_time > 0.5)
 		{
-			window->set_title("Software Renderer FPS:" + std::to_string(int(1.0 / deltatime)));
+			window->set_title("Software Renderer FPS:" + std::to_string(int(1.0 / deltatime + 0.5)));
 			last_print_fps_time = get_time();
 		}
 
@@ -211,8 +218,13 @@ int main()
 			}
 		}
 
+		//system("cls");
+		//std::cout << Profiler::str(true) << std::endl;
+		//Profiler::clear();
+
 		window->show();
-		window->poll_events();
+		do window->poll_events();
+		while (get_time() - last_time < min_frame_time);
 	}
 
 	{

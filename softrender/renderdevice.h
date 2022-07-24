@@ -47,6 +47,9 @@ struct VertexArray
 	IndexBuffer indices;
 };
 
+class FixedThreadPool;
+
+
 class RenderDevice : public std::enable_shared_from_this<RenderDevice>
 {
 public:
@@ -103,6 +106,8 @@ private:
 
 	std::unique_ptr<ShaderProgram> _shader_program = std::make_unique<ShaderProgram>();
 
+	std::unique_ptr<FixedThreadPool> _thread_pool;
+
 	
 	struct Point
 	{
@@ -144,6 +149,8 @@ private:
 	std::vector<FSIn>		_fsin_buffer;
 	std::vector<Fragment>   _fragment_buffer;
 	
+	std::vector<std::vector<FSIn>>	   _thread_fsin_buffer;
+	std::vector<std::vector<Fragment>> _thread_fragment_buffer;
 
 	void _run_vertex_shader(const VertexBuffer& vertices);
 
@@ -199,11 +206,11 @@ private:
 
 	void add_triangle(size_t i, size_t j, size_t k);
 
-	void draw_point(const VSOut& v);
+	void draw_point(const VSOut& v, std::vector<FSIn>& fsin_buffer, std::vector<Fragment>& fragment_buffer);
 	
-	void draw_line(const VSOut& s, const VSOut& t);
+	void draw_line(const VSOut& s, const VSOut& t, std::vector<FSIn>& fsin_buffer, std::vector<Fragment>& fragment_buffer);
 
-	void draw_triangle(const VSOut& a, const VSOut& b, const VSOut& c);
+	void draw_triangle(const VSOut& a, const VSOut& b, const VSOut& c, std::vector<FSIn>& fsin_buffer, std::vector<Fragment>& fragment_buffer);
 	
 	void clip_lines_by_plane(ClipPlane plane);
 

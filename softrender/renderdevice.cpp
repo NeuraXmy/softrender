@@ -1,14 +1,14 @@
 #include "renderdevice.h"
 #include "shader.h"
 #include "framebuffer.h"
+#include "threadpool.h"
+#include "profiler.h"
 #include <algorithm>
 #include <iostream>
-#include <thread>
-#include <mutex>
 
 RenderDevice::RenderDevice()
 {
-	
+	_thread_pool = std::make_unique<FixedThreadPool>(std::thread::hardware_concurrency());
 }
 
 RenderDevice::~RenderDevice()
@@ -67,8 +67,11 @@ void RenderDevice::draw(FrameBuffer& framebuffer, VertexArray vertex_array)
 		_render_states.viewport.h = framebuffer.height();
 	}
 
-	clear_buffers();
-
+	{
+		PROFILE_SCOPE("clear buffers")
+		clear_buffers();
+	}
+		
 	_run_vertex_shader(vertices);
 	
 	switch (_render_states.primitive_mode)
@@ -80,24 +83,24 @@ void RenderDevice::draw(FrameBuffer& framebuffer, VertexArray vertex_array)
 		_rasterize_points();
 		break;
 
-	case PrimitiveMode::LINES: 
+	case PrimitiveMode::LINES:
 	case PrimitiveMode::LINE_STRIPE:
 	case PrimitiveMode::LINE_LOOP:
-		 _assemble_lines(indices);
-		 _clipping_lines();
-		 _to_viewport();
-		 _rasterize_lines();
+		_assemble_lines(indices);
+		_clipping_lines();
+		_to_viewport();
+		_rasterize_lines();
 		break;
 
 	case PrimitiveMode::TRIANGLES:
 	case PrimitiveMode::TRIANGLE_STRIPE:
 	case PrimitiveMode::TRIANGLE_FAN:
 	case PrimitiveMode::QUADS:
-		 _assemble_triangles(indices);
-		 _clipping_triangles();
-		 _to_viewport();
-		 _face_culling();
-		 _rasterize_triangles();
+		_assemble_triangles(indices);
+		_clipping_triangles();
+		_to_viewport();
+		_face_culling();
+		_rasterize_triangles();
 		break;
 	}
 
@@ -114,25 +117,50 @@ void RenderDevice::draw(FrameBuffer& framebuffer, VertexArray vertex_array)
 
 void RenderDevice::_run_vertex_shader(const VertexBuffer& vertices)
 {
+	PROFILE_SCOPE("run vs")
 	assert(_shader_program->vertex_shader);
 	auto vs = _shader_program->vertex_shader;
-	vs->load_uniforms();
-	for (auto& vsin : vertices)
+
+	int batch_count = _thread_pool->thread_count();
+	int batch_size = vertices.size() / batch_count;
+
+	_vsout_buffer.resize(vertices.size());
+
+	auto run_vs = [vs, this, &vertices](int l, int r)
 	{
-		VSOut result;
-		vs->run(vsin, result);
-		_vsout_buffer.push_back(result);
+		vs->load_uniforms();
+		for(int i = l; i < r; i++)
+		{
+			VSOut result;
+			vs->run(vertices[i], result);
+			_vsout_buffer[i] = result;
+		}
+	};
+
+	{
+		static std::vector<std::future<void>> futs;
+		futs.clear();
+		for (int i = 0; i < batch_count; i++)
+		{
+			int l = i * batch_size;
+			int r = i == batch_count - 1 ? vertices.size() : l + batch_size;
+			futs.push_back(_thread_pool->execute(std::bind(run_vs, l, r)));
+		}
+		for (auto&& fut : futs)
+			fut.wait();
 	}
 }
 
 void RenderDevice::_assemble_points(const IndexBuffer& indices)
 {
+	PROFILE_SCOPE("assemble points")
 	for (size_t i = 0; i < indices.size(); i++)
 		add_point(indices[i]);
 }
 
 void RenderDevice::_assemble_lines(const IndexBuffer& indices)
 {
+	PROFILE_SCOPE("assemble lines")
 	if (_render_states.primitive_mode == PrimitiveMode::LINES)
 	{
 		for(size_t i = 0; i + 1 < indices.size(); i += 2)
@@ -154,6 +182,7 @@ void RenderDevice::_assemble_lines(const IndexBuffer& indices)
 
 void RenderDevice::_assemble_triangles(const IndexBuffer& indices)
 {
+	PROFILE_SCOPE("assemble triangles")
 	if (_render_states.primitive_mode == PrimitiveMode::TRIANGLES)
 	{
 		for(size_t i = 0; i + 2 < indices.size(); i += 3)
@@ -187,6 +216,7 @@ void RenderDevice::_assemble_triangles(const IndexBuffer& indices)
 
 void RenderDevice::_clipping_points()
 {
+	PROFILE_SCOPE("clipping points")
 	for (auto& point : _point_buffer)
 	{
 		auto& p = point.v;
@@ -200,6 +230,7 @@ void RenderDevice::_clipping_points()
 
 void RenderDevice::_clipping_lines()
 {
+	PROFILE_SCOPE("clipping lines")
 	clip_lines_by_plane(ClipPlane::LEFT);
 	clip_lines_by_plane(ClipPlane::RIGHT);
 	clip_lines_by_plane(ClipPlane::BOTTOM);
@@ -210,6 +241,7 @@ void RenderDevice::_clipping_lines()
 
 void RenderDevice::_clipping_triangles()
 {
+	PROFILE_SCOPE("clipping triangles")
 	clip_triangles_by_plane(ClipPlane::LEFT);
 	clip_triangles_by_plane(ClipPlane::RIGHT);
 	clip_triangles_by_plane(ClipPlane::BOTTOM);
@@ -220,6 +252,7 @@ void RenderDevice::_clipping_triangles()
 
 void RenderDevice::_face_culling()
 {
+	PROFILE_SCOPE("face culling")
 	if (_render_states.cull_face_mode != CullFaceMode::NONE)
 	{
 		auto order = _render_states.front_vertex_order;
@@ -245,6 +278,7 @@ void RenderDevice::_face_culling()
 
 void RenderDevice::_to_viewport()
 {
+	PROFILE_SCOPE("to viewport")
 	for (auto& point : _point_buffer)
 		vsout_to_viewport(point.v);
 	for (auto& line : _line_buffer)
@@ -257,61 +291,103 @@ void RenderDevice::_to_viewport()
 
 void RenderDevice::_rasterize_points()
 {
+	PROFILE_SCOPE("rasterize points")
 	for (auto& point : _point_buffer)
 	{
 		if (point.culled) continue;
-		draw_point(point.v);
+		draw_point(point.v, _fsin_buffer, _fragment_buffer);
 	}
 }
 
 void RenderDevice::_rasterize_lines()
 {
+	PROFILE_SCOPE("rasterize lines")
 	for (auto& line : _line_buffer)
 	{
 		if (line.culled) continue;
 		if (_render_states.polygon_mode == PolygonMode::POINTED)
 		{
-			draw_point(line.v[0]);
-			draw_point(line.v[1]);
+			draw_point(line.v[0], _fsin_buffer, _fragment_buffer);
+			draw_point(line.v[1], _fsin_buffer, _fragment_buffer);
 		}
 		else
 		{
-			draw_line(line.v[0], line.v[1]);
+			draw_line(line.v[0], line.v[1], _fsin_buffer, _fragment_buffer);
 		}
 	}
 }
 
 void RenderDevice::_rasterize_triangles()
 {
-	for (auto& triangle : _triangle_buffer)
-	{
-		if (triangle.culled) continue;
+	PROFILE_SCOPE("rasterize triangles")
 
-		auto& v0 = triangle.v[0];
-		auto& v1 = triangle.v[1];
-		auto& v2 = triangle.v[2];
+	std::mutex merge_mtx;
+
+	auto rasterize = [this, &merge_mtx](int l, int r, int tid) {
 		
-		if (_render_states.polygon_mode == PolygonMode::POINTED)
+		_thread_fsin_buffer[tid].clear();
+		_thread_fragment_buffer[tid].clear();
+		
+		for(int i = l; i < r; i++)
 		{
-			draw_point(v0);
-			draw_point(v1);
-			draw_point(v2);
+			auto& triangle = _triangle_buffer[i];
+			if (triangle.culled) continue;
+
+			auto& v0 = triangle.v[0];
+			auto& v1 = triangle.v[1];
+			auto& v2 = triangle.v[2];
+
+			if (_render_states.polygon_mode == PolygonMode::POINTED)
+			{
+				draw_point(v0, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+				draw_point(v1, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+				draw_point(v2, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+			}
+			else if (_render_states.polygon_mode == PolygonMode::WIREFRAME)
+			{
+				draw_line(v0, v1, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+				draw_line(v1, v2, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+				draw_line(v2, v0, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+			}
+			else
+			{
+				draw_triangle(v0, v1, v2, _thread_fsin_buffer[tid], _thread_fragment_buffer[tid]);
+			}
 		}
-		else if (_render_states.polygon_mode == PolygonMode::WIREFRAME)
+
 		{
-			draw_line(v0, v1);
-			draw_line(v1, v2);
-			draw_line(v2, v0);
+			std::lock_guard<std::mutex> lock(merge_mtx);
+			for(auto&& fsin : _thread_fsin_buffer[tid])
+				_fsin_buffer.push_back(fsin);
+			for(auto&& fragment : _thread_fragment_buffer[tid])
+				_fragment_buffer.push_back(fragment);
 		}
-		else
+	};
+
+	int batch_count = _thread_pool->thread_count() * 10;
+	int batch_size = _triangle_buffer.size() / batch_count;
+
+	_thread_fsin_buffer.resize(batch_count);
+	_thread_fragment_buffer.resize(batch_count);
+
+	{
+		static std::vector<std::future<void>> futs;
+		futs.clear();
+
+		for (int i = 0; i < batch_count; i++)
 		{
-			draw_triangle(v0, v1, v2);
+			int l = i * batch_size;
+			int r = i == batch_count - 1 ? _triangle_buffer.size() : l + batch_size;
+			futs.push_back(_thread_pool->execute(std::bind(rasterize, l, r, i)));
 		}
+		for (auto&& fut : futs)
+			fut.wait();
 	}
 }
 
 void RenderDevice::_early_z_test(FrameBuffer& framebuffer)
 {
+	PROFILE_SCOPE("early z test")
 	if (_render_states.depth_test && _render_states.eary_z_test)
 	{
 		assert(framebuffer.depth_format() != FrameBuffer::DepthFormat::None);
@@ -334,27 +410,47 @@ void RenderDevice::_early_z_test(FrameBuffer& framebuffer)
 
 void RenderDevice::_run_fragment_shader()
 {
-	for (int i = 0; i < _fsin_buffer.size(); i++)
-		for (int j = 0; j < _shader_program->varying_num; j++)
-			_fsin_buffer[i].in_varying[j] /= _fragment_buffer[i].inv_w;
+	PROFILE_SCOPE("run fs")
 	
 	assert(_shader_program->fragment_shader);
-	auto fs = _shader_program->fragment_shader;
-
-	auto run_fs = [fs](const FSIn& fsin, Fragment& fragment) {
-		FSOut result;
-		fs->run(fsin, result);
-		fragment.color = result.color;
-		fragment.discarded |= result.discarded;
+	
+	auto run_fs = [this](int l, int r)
+	{
+		auto fs = _shader_program->fragment_shader;
+		fs->load_uniforms();
+		for (int i = l; i < r; i++) 
+		{
+			auto& fsin = _fsin_buffer[i];
+			auto& fragment = _fragment_buffer[i];
+			FSOut result;
+			for (int j = 0; j < _shader_program->varying_num; j++)
+				fsin.in_varying[j] /= fragment.inv_w;
+			fs->run(fsin, result);
+			fragment.color = result.color;
+			fragment.discarded |= result.discarded;
+		}
 	};
+	
+	{
+		int batch_count = _thread_pool->thread_count();
+		int batch_size = _fragment_buffer.size() / batch_count;
 
-	fs->load_uniforms();
-	for (int i = 0; i < _fsin_buffer.size(); i++)
-		run_fs(_fsin_buffer[i], _fragment_buffer[i]);
+		static std::vector<std::future<void>> futs;
+		futs.clear();
+		for (int i = 0; i < batch_count; i++)
+		{
+			int l = i * batch_size;
+			int r = i == batch_count - 1 ? _fragment_buffer.size() : l + batch_size;
+			futs.push_back(_thread_pool->execute(std::bind(run_fs, l, r)));
+		}
+		for (auto&& fut : futs)
+			fut.wait();
+	}
 }
 
 void RenderDevice::_fragment_test(FrameBuffer& framebuffer)
 {
+	PROFILE_SCOPE("fragment test")
 	for (auto& fragment : _fragment_buffer)
 	{
 		if (fragment.discarded) continue;
@@ -388,7 +484,7 @@ void RenderDevice::_fragment_test(FrameBuffer& framebuffer)
 
 void RenderDevice::_post_processing(FrameBuffer& framebuffer)
 {
-	
+	PROFILE_SCOPE("post processing")
 }
 
 
@@ -423,7 +519,7 @@ void RenderDevice::add_triangle(size_t i, size_t j, size_t k)
 	_triangle_buffer.push_back(Triangle{ _vsout_buffer[i], _vsout_buffer[j], _vsout_buffer[k] });
 }
 
-void RenderDevice::draw_point(const VSOut& v)
+void RenderDevice::draw_point(const VSOut& v, std::vector<FSIn>& fsin_buffer, std::vector<Fragment>& fragment_buffer)
 {
 	int sx = std::ceil(v.position.x - _render_states.point_size * 0.5f);
 	int tx = std::floor(v.position.x + _render_states.point_size * 0.5f);
@@ -441,18 +537,18 @@ void RenderDevice::draw_point(const VSOut& v)
 					continue;
 			}
 
-			_fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
+			fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
 
 			Fragment fragment;
 			fragment.x = x;
 			fragment.y = y;
 			fragment.depth = v.position.z;
 			fragment.inv_w = v.position.w;
-			_fragment_buffer.push_back(fragment);
+			fragment_buffer.push_back(fragment);
 		}
 }
 
-void RenderDevice::draw_line(const VSOut& vs, const VSOut& vt)
+void RenderDevice::draw_line(const VSOut& vs, const VSOut& vt, std::vector<FSIn>& fsin_buffer, std::vector<Fragment>& fragment_buffer)
 {
 	int sx = floor(vs.position.x);
 	int tx = floor(vt.position.x);
@@ -477,7 +573,7 @@ void RenderDevice::draw_line(const VSOut& vs, const VSOut& vt)
 		float t = float(x - sx) / (tx - sx);
 		VSOut v = interpolation_vsout(vs, vt, reverse ? 1.0f - t : t);
 
-		_fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
+		fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
 
 		Fragment fragment;
 		fragment.x = x;
@@ -485,7 +581,7 @@ void RenderDevice::draw_line(const VSOut& vs, const VSOut& vt)
 		if (steep) std::swap(fragment.x, fragment.y);
 		fragment.depth = v.position.z;
 		fragment.inv_w = v.position.w;
-		_fragment_buffer.push_back(fragment);
+		fragment_buffer.push_back(fragment);
 
 		error -= dy;
 		if (error < 0)
@@ -493,12 +589,12 @@ void RenderDevice::draw_line(const VSOut& vs, const VSOut& vt)
 	}
 }
 
-void RenderDevice::draw_triangle(const VSOut& v0, const VSOut& v1, const VSOut& v2)
+void RenderDevice::draw_triangle(const VSOut& v0, const VSOut& v1, const VSOut& v2, std::vector<FSIn>& fsin_buffer, std::vector<Fragment>& fragment_buffer)
 {
 	Vec2 p[3] = {
 			Vec2(v0.position.x, v0.position.y),
 			Vec2(v1.position.x, v1.position.y),
-			Vec2(v2.position.x, v2.position.y) 
+			Vec2(v2.position.x, v2.position.y)
 	};
 	int sx = std::floor(std::min({ p[0].x, p[1].x, p[2].x }));
 	int tx = std::floor(std::max({ p[0].x, p[1].x, p[2].x }));
@@ -519,16 +615,18 @@ void RenderDevice::draw_triangle(const VSOut& v0, const VSOut& v1, const VSOut& 
 
 			VSOut v = interpolation_vsout(v0, v1, v2, t0, t1, t2);
 
-			_fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
+			fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
 
 			Fragment fragment;
 			fragment.x = x;
 			fragment.y = y;
 			fragment.depth = v.position.z;
 			fragment.inv_w = v.position.w;
-			_fragment_buffer.push_back(fragment);
+			fragment_buffer.push_back(fragment);
 		}
+
 }
+
 
 void RenderDevice::clip_triangles_by_plane(RenderDevice::ClipPlane plane)
 {	

@@ -267,6 +267,7 @@ Color4 Texture::sample(float x, float y) const
 			cy += cx[i] * wy[i];
 		return cy;
 	}
+	return Color::BLACK;
 }
 
 Color4 TextureSampler::sample(float x, float y) const
