@@ -140,10 +140,9 @@ void RenderDevice::_run_vertex_shader(const VertexBuffer& vertices)
 	{
 		static std::vector<std::future<void>> futs;
 		futs.clear();
-		for (int i = 0; i < batch_count; i++)
+		for (int i = 0, l = 0, r = 0; i < batch_count; i++, l = r)
 		{
-			int l = i * batch_size;
-			int r = i == batch_count - 1 ? vertices.size() : l + batch_size;
+			r += get_batch_size(vertices.size(), batch_count, i);
 			futs.push_back(_thread_pool->execute(std::bind(run_vs, l, r)));
 		}
 		for (auto&& fut : futs)
@@ -374,10 +373,9 @@ void RenderDevice::_rasterize_triangles()
 		static std::vector<std::future<void>> futs;
 		futs.clear();
 
-		for (int i = 0; i < batch_count; i++)
+		for (int i = 0, l = 0, r = 0; i < batch_count; i++, l = r)
 		{
-			int l = i * batch_size;
-			int r = i == batch_count - 1 ? _triangle_buffer.size() : l + batch_size;
+			r += get_batch_size(_triangle_buffer.size(), batch_count, i);
 			futs.push_back(_thread_pool->execute(std::bind(rasterize, l, r, i)));
 		}
 		for (auto&& fut : futs)
@@ -437,10 +435,9 @@ void RenderDevice::_run_fragment_shader()
 
 		static std::vector<std::future<void>> futs;
 		futs.clear();
-		for (int i = 0; i < batch_count; i++)
+		for (int i = 0, l = 0, r = 0; i < batch_count; i++, l = r)
 		{
-			int l = i * batch_size;
-			int r = i == batch_count - 1 ? _fragment_buffer.size() : l + batch_size;
+			r += get_batch_size(_fragment_buffer.size(), batch_count, i);
 			futs.push_back(_thread_pool->execute(std::bind(run_fs, l, r)));
 		}
 		for (auto&& fut : futs)
@@ -606,16 +603,16 @@ void RenderDevice::draw_triangle(const VSOut& v0, const VSOut& v1, const VSOut& 
 		{
 			Vec2 pt = Vec2(x + 0.5, y + 0.5);
 
-			float s = area(p[0], p[1], p[2]);
-			float t0 = area(pt, p[1], p[2]) / s;
-			float t1 = area(pt, p[2], p[0]) / s;
-			float t2 = area(pt, p[0], p[1]) / s;
+			float inv_s = 1.0f / area(p[0], p[1], p[2]);
+			float t0 = area(pt, p[1], p[2]) * inv_s;
+			float t1 = area(pt, p[2], p[0]) * inv_s;
+			float t2 = area(pt, p[0], p[1]) * inv_s;
 			if (t0 < 0.0f || t1 < 0.0f || t2 < 0.0f)
 				continue;
 
 			VSOut v = interpolation_vsout(v0, v1, v2, t0, t1, t2);
 
-			fsin_buffer.push_back(FSIn(v, _shader_program->varying_num));
+			fsin_buffer.emplace_back(v, _shader_program->varying_num);
 
 			Fragment fragment;
 			fragment.x = x;

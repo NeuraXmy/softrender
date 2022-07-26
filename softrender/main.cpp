@@ -218,9 +218,9 @@ int main()
 			}
 		}
 
-		//system("cls");
-		//std::cout << Profiler::str(true) << std::endl;
-		//Profiler::clear();
+		system("cls");
+		std::cout << Profiler::str(true) << std::endl;
+		Profiler::clear();
 
 		window->show();
 		do window->poll_events();

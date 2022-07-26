@@ -41,6 +41,28 @@ bool Model::load(std::string_view path)
 	_process_node(scene->mRootNode, scene);
 	
 	_centroid_position /= float(_position_count);
+
+	int vsum = 0;
+	int tsum = 0;
+	std::cout << "model loaded : " << path << std::endl;
+	for (int i = 0; i < _meshes.size(); i++)
+	{
+		auto& mesh = _meshes[i];
+		vsum += mesh.vertex_array.vertices.size();
+		tsum += mesh.vertex_array.indices.size() / 3;
+	}
+	std::cout << "  total vertices count:  " << vsum << std::endl;
+	std::cout << "  total triangles count: " << tsum << std::endl;
+	std::cout << "  total textures count:  " << _textures.size() << std::endl;
+	/*
+	for(int i = 0; i < _meshes.size(); i++)
+	{
+		auto& mesh = _meshes[i];
+		std::cout << "  mesh " << i << ": " << std::endl;
+		std::cout << "    vertices count:  " << mesh.vertex_array.vertices.size() << std::endl;
+		std::cout << "    triangles count: " << mesh.vertex_array.indices.size() / 3 << std::endl;
+	}
+	*/
 	
 	return true;
 }

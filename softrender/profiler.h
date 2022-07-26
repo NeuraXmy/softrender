@@ -6,9 +6,6 @@
 #include <unordered_map>
 #include <sstream>
 #include <iomanip>
-#include <iostream>
-
-using namespace std::string_literals;
 
 class Profiler
 {
@@ -38,8 +35,6 @@ public:
 			case Profiler::Mode::AVG:
 				_times[_name].first += delta;
 				_times[_name].second += 1;
-				if (_name == "run fs")
-				std::cout << std::fixed << std::setprecision(7)<< delta << std::endl;
 				break;
 			case Profiler::Mode::SUM:
 				_times[_name].first += delta;
