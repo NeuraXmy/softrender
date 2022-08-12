@@ -4,7 +4,7 @@
 #include "threadpool.h"
 #include "profiler.h"
 #include <algorithm>
-#include <iostream>
+
 
 RenderDevice::RenderDevice()
 {
